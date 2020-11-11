@@ -5,10 +5,7 @@ mod broadcaster;
 use std::thread;
 use std::sync::mpsc::{Sender, Receiver};
 use std::sync::{mpsc, Arc, RwLock};
-use std::net::{TcpListener, TcpStream, Shutdown};
-use std::str;
-use std::time::SystemTime;
-use std::io::Write;
+use std::net::{TcpListener, TcpStream};
 use crate::broadcaster::start_broadcaster;
 use crate::client_handler::handle_client;
 
@@ -33,7 +30,7 @@ fn main() {
 
     for stream in listener.incoming() {
         match stream {
-            Ok(mut stream) => { // New client connected
+            Ok(stream) => { // New client connected
                 // Thread to handle the client
                 clients_arc.write().unwrap().push(stream.try_clone().expect("Cannot clone stream"));
                 let sender = sender.clone();

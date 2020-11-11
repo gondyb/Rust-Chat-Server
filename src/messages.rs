@@ -18,18 +18,6 @@ pub trait Message {
     fn beautify(&self) -> String;
 }
 
-fn from_string(mut msg_string: String, author: String) -> UserMessage {
-    msg_string.truncate(msg_string.len() - 2);
-    let content = msg_string;
-    let dt = Utc::now();
-
-    UserMessage {
-        username: author,
-        content: content.to_string(),
-        date: dt
-    }
-}
-
 impl Message for UserMessage {
     fn beautify(&self) -> String {
         format_args!(

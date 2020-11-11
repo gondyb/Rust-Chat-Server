@@ -1,12 +1,12 @@
-use std::sync::mpsc::{Sender, Receiver};
-use std::net::{TcpListener, TcpStream, Shutdown};
-use std::io::{Read, Write, BufReader, BufWriter, BufRead};
+use std::sync::mpsc::{Sender};
+use std::net::{TcpStream, Shutdown};
+use std::io::{Write, BufReader, BufWriter, BufRead};
 use ansi_term::Colour;
 use ansi_term::Colour::RGB;
 use rand::Rng;
 use crate::messages::{UserMessage, SystemMessage};
 use crate::messages::Message;
-use chrono::{DateTime, Utc};
+use chrono::{Utc};
 
 
 fn generate_random_color() -> Colour {
