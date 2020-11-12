@@ -13,20 +13,24 @@ pub struct BroadcastMessage {
     pub send_to_sender: bool
 }
 
+// Sends a message to all clients connected in a given channel
 pub fn start_broadcaster_thread(
     broadcast_rx: Receiver<BroadcastMessage>,
     postman_tx: Sender<PostmanMessage>,
-    channels: Arc<Mutex<HashMap<String, Channel>>>) {
+    channels: Arc<Mutex<HashMap<String, Channel>>>
+) {
     thread::spawn(move || {
         loop {
+            // Receive message from broadcast channel
             let msg = match broadcast_rx.recv() {
                 Ok(msg) => msg,
                 Err(e) => {
-                    println!("Error when receiving message {:?}", e);
+                    println!("Error when receiving message from broadcast channel {:?}", e);
                     continue
                 }
             };
 
+            // Lock mutex to access IRC channels HashMap
             let channels = match channels.lock() {
                 Ok(channels) => channels,
                 Err(e) => {
@@ -35,6 +39,7 @@ pub fn start_broadcaster_thread(
                 }
             };
 
+            // Get the IRC channel on which the message will be sent
             let channel = match channels.get(&*msg.channel.clone()) {
                 Some(channel) => channel,
                 _ => {
@@ -43,7 +48,9 @@ pub fn start_broadcaster_thread(
                 }
             };
 
+            // Sends the message to all clients connected in the IRC channel
             for client in channel.clients.iter() {
+                // Skip sending message to sender if wanted
                 if *client == msg.sender && msg.send_to_sender == false {
                     continue;
                 }
@@ -59,6 +66,7 @@ pub fn start_broadcaster_thread(
     });
 }
 
+// Send message to broadcast channel
 pub fn send_broadcast_message(message: BroadcastMessage, broadcast_tx: Sender<BroadcastMessage>) {
     match broadcast_tx.send(message) {
         Ok(_) => {},
