@@ -4,13 +4,15 @@ use std::sync::mpsc::Sender;
 
 use uuid::Uuid;
 
-use crate::protocol::{part_msg, pong, priv_msg, welcome_reply};
-use crate::server::{BroadcastMessage, ChannelMessage};
+use crate::protocol::{part_msg, pong, priv_msg};
+use crate::channels::{ChannelMessage, send_channel_message};
+use crate::broadcast::{BroadcastMessage, send_broadcast_message};
 
 pub struct Client {
     pub id: Uuid,
     pub stream: TcpStream,
     pub username: String,
+    pub domain: String,
     pub channel: Option<String>
 }
 
@@ -20,6 +22,7 @@ impl Clone for Client {
             id: self.id,
             stream: self.stream.try_clone().expect("Unable to clone client's stream"),
             username: self.username.clone(),
+            domain: self.domain.clone(),
             channel: self.channel.clone()
         }
     }
@@ -31,17 +34,30 @@ impl PartialEq for Client {
     }
 }
 
-pub fn handle_client(client: TcpStream, broadcast_tx: Sender<BroadcastMessage>, registration_tx: Sender<Client>, channel_tx: Sender<ChannelMessage>) {
-    let mut reader = BufReader::new(client.try_clone().unwrap());
+pub fn handle_client(
+    client: TcpStream,
+    broadcast_tx: Sender<BroadcastMessage>,
+    registration_tx: Sender<Client>,
+    channel_tx: Sender<ChannelMessage>
+) {
+    let stream = match client.try_clone() {
+        Ok(stream) => stream,
+        Err(e) => {
+            println!("Unable to clone stream: {:?}", e);
+            return
+        }
+    };
 
-    let mut recvd_message = String::new();
+    let mut reader = BufReader::new(stream);
+
+    let mut received_message = String::new();
 
     let mut current_client: Option<Client> = Option::None;
 
-    while match reader.read_line(&mut recvd_message) {
+    while match reader.read_line(&mut received_message) {
         Ok(_) => {
             handle_msg(
-                recvd_message.clone(),
+                received_message.clone(),
                 client.try_clone().unwrap(),
                 broadcast_tx.clone(),
                 registration_tx.clone(),
@@ -49,11 +65,13 @@ pub fn handle_client(client: TcpStream, broadcast_tx: Sender<BroadcastMessage>, 
                 &mut current_client
             );
 
-            recvd_message = String::new();
+            received_message = String::new();
             true
         },
         Err(e) => {
-            panic!("{:?}", e);
+            println!("Unable to read message fro client: {:?}", e);
+            // TODO: Client disconnected
+            false
         }
     } {}
 }
@@ -87,12 +105,33 @@ fn handle_msg(
                 leave: false
             };
 
-            channel_tx.send(msg);
+            match channel_tx.send(msg) {
+                Ok(_) => {},
+                Err(e) => {
+                    println!("Unable to send message to channel channel: {:?}", e);
+                    return
+                }
+            };
         }
         "PING" => {
+            // Message is sent without postman, because the message can be received even if client
+            // has not registered yet.
             let mut writer = BufWriter::new(stream.try_clone().unwrap());
-            writer.write(pong(String::from(args[1])).as_bytes());
-            writer.flush();
+            match writer.write(pong(String::from(args[1])).as_bytes()) {
+                Ok(_) => {},
+                Err(e) => {
+                    println!("Unable to send back pong message: {:?}", e);
+                    return
+                }
+            };
+
+            match writer.flush() {
+                Ok(_) => {},
+                Err(e) => {
+                    println!("Unable to flush pong message: {:?}", e);
+                    return
+                }
+            }
         }
         "PRIVMSG" => {
             let sender = current_client_mut.clone().unwrap();
@@ -110,7 +149,7 @@ fn handle_msg(
                 send_to_sender: false
             };
 
-            broadcast_tx.send(msg);
+            send_broadcast_message(msg, broadcast_tx.clone());
         }
         "PART" => {
             let sender = current_client_mut.clone().unwrap();
@@ -128,7 +167,7 @@ fn handle_msg(
                 send_to_sender: true
             };
 
-            broadcast_tx.send(msg);
+            send_broadcast_message(msg, broadcast_tx.clone());
 
             let msg = ChannelMessage {
                 client: current_client_mut.clone().unwrap(),
@@ -136,7 +175,7 @@ fn handle_msg(
                 leave: true
             };
 
-            channel_tx.send(msg);
+            send_channel_message(msg, channel_tx.clone());
         }
         _ => {
             println!("Command {} not found", args[0]);
@@ -146,18 +185,30 @@ fn handle_msg(
 }
 
 fn register_client(stream: TcpStream, username: String, registration_tx: Sender<Client>, current_client: &mut Option<Client>) {
+    let local_addr = match stream.local_addr() {
+        Ok(local_addr) => local_addr,
+        Err(e) => {
+            println!("Unable to retrieve local_addr from stream: {:?}", e);
+            return
+        }
+    };
+
+
     let client = Client{
         id: Uuid::new_v4(),
         stream: stream.try_clone().unwrap(),
         username: username.clone(),
+        domain: local_addr.ip().to_string(),
         channel: None
     };
 
-    let mut writer = BufWriter::new(stream.try_clone().unwrap());
-    writer.write(welcome_reply(username).as_bytes());
-    writer.flush();
-
     *current_client = Option::Some(client.clone());
 
-    registration_tx.send(client);
+    match registration_tx.send(client) {
+        Ok(_) => {},
+        Err(e) => {
+            println!("Unable to send registration message to channel: {:?}", e);
+            return;
+        }
+    };
 }

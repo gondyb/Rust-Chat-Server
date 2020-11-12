@@ -1,4 +1,4 @@
-use crate::server::Channel;
+use crate::channels::Channel;
 
 fn generate_response(code: u16, nick: String, content: String) -> String {
     format!(":guyot-gondange.fr {:03} {} :{}\r\n", code, nick, content)
