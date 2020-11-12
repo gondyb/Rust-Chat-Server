@@ -33,9 +33,9 @@ Les fonctions implémentées sont les suivantes :
 
 ## Architecture
 
-Des différents composants s'occupent des différentes parties de l'applcation :
+Des différents composants s'occupent des différentes parties de l'applocation :
 
-* Regitration s'occupe de l'enregistrement et du désenregistrement des clients
+* Registration s'occupe de l'enregistrement et du désenregistrement des clients
 * Channels s'occupe de l'ajout et la suppression de clients aux channels
 * Broadcast s'occupe d'envoyer des messages à une channel entière
 * client_handler s'occupe de lire les messages envoyés par les clients et de les dispatcher.
