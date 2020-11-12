@@ -54,26 +54,37 @@ pub fn handle_client(
 
     let mut current_client: Option<Client> = Option::None;
 
-    while match reader.read_line(&mut received_message) {
-        Ok(_) => {
-            handle_msg(
-                received_message.clone(),
-                client.try_clone().unwrap(),
-                broadcast_tx.clone(),
-                registration_tx.clone(),
-                channel_tx.clone(),
-                &mut current_client
-            );
+    loop {
 
-            received_message = String::new();
-            true
-        },
-        Err(e) => {
-            println!("Unable to read message fro client: {:?}", e);
-            // TODO: Client disconnected
-            false
+        let stream = match client.try_clone() {
+            Ok(stream) => stream,
+            Err(e) => {
+                println!("Error when cloning stream to handle messages: {:?}", e);
+                continue
+            }
+        };
+
+        match reader.read_line(&mut received_message) {
+            Ok(_) => {
+                handle_msg(
+                    received_message.clone(),
+                    stream,
+                    broadcast_tx.clone(),
+                    registration_tx.clone(),
+                    channel_tx.clone(),
+                    &mut current_client
+                );
+
+                received_message = String::new();
+            },
+            Err(e) => {
+                println!("Unable to read message fro client: {:?}", e);
+                // TODO: Client disconnected
+                continue
+            }
         }
-    } {}
+    }
+
 }
 
 fn handle_msg(
@@ -99,8 +110,16 @@ fn handle_msg(
             );
         }
         "JOIN" => {
+            let current_client = match current_client_mut {
+                Some(client) => client,
+                _ => {
+                    println!("Client not registered! Ignoring message...");
+                    return
+                }
+            };
+
             let msg = ChannelMessage {
-                client: current_client_mut.clone().unwrap(),
+                client: current_client.clone(),
                 channel: String::from(args[1]),
                 leave: false
             };
@@ -116,7 +135,15 @@ fn handle_msg(
         "PING" => {
             // Message is sent without postman, because the message can be received even if client
             // has not registered yet.
-            let mut writer = BufWriter::new(stream.try_clone().unwrap());
+            let stream = match stream.try_clone() {
+                Ok(stream) => stream,
+                Err(e) => {
+                    println!("Unable to clone TcpStream: {:?}", e);
+                    return
+                }
+            };
+
+            let mut writer = BufWriter::new(stream);
             match writer.write(pong(String::from(args[1])).as_bytes()) {
                 Ok(_) => {},
                 Err(e) => {
@@ -134,10 +161,18 @@ fn handle_msg(
             }
         }
         "PRIVMSG" => {
-            let sender = current_client_mut.clone().unwrap();
+            let current_client = match current_client_mut {
+                Some(client) => client,
+                _ => {
+                    println!("Client not registered! Ignoring message...");
+                    return
+                }
+            };
+
+            let sender = current_client.clone();
             let content = priv_msg(
                 sender.username.clone(),
-                sender.stream.local_addr().unwrap().ip().to_string(),
+                sender.domain.clone(),
                 String::from(args[1]),
                 String::from(body[1]).replace('\r', "").replace('\n', "")
             );
@@ -152,10 +187,18 @@ fn handle_msg(
             send_broadcast_message(msg, broadcast_tx.clone());
         }
         "PART" => {
-            let sender = current_client_mut.clone().unwrap();
+            let current_client = match current_client_mut {
+                Some(client) => client,
+                _ => {
+                    println!("Client not registered! Ignoring message...");
+                    return
+                }
+            };
+
+            let sender = current_client.clone();
             let content = part_msg(
                 sender.username.clone(),
-                sender.stream.local_addr().unwrap().ip().to_string(),
+                sender.domain.clone(),
                 String::from(args[1]),
                 String::from(body[1]).replace('\r', "").replace('\n', "")
             );
@@ -170,7 +213,7 @@ fn handle_msg(
             send_broadcast_message(msg, broadcast_tx.clone());
 
             let msg = ChannelMessage {
-                client: current_client_mut.clone().unwrap(),
+                client: current_client.clone(),
                 channel: String::from(args[1]),
                 leave: true
             };
@@ -193,10 +236,17 @@ fn register_client(stream: TcpStream, username: String, registration_tx: Sender<
         }
     };
 
+    let stream = match stream.try_clone() {
+        Ok(stream) => stream,
+        Err(e) => {
+            println!("Unable to clone stream: {:?}", e);
+            return
+        }
+    };
 
     let client = Client{
         id: Uuid::new_v4(),
-        stream: stream.try_clone().unwrap(),
+        stream,
         username: username.clone(),
         domain: local_addr.ip().to_string(),
         channel: None

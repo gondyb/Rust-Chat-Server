@@ -18,7 +18,13 @@ mod registration;
 mod broadcast;
 
 fn main() {
-    let listener = TcpListener::bind("0.0.0.0:3333").unwrap();
+    let listener = match TcpListener::bind("0.0.0.0:3333") {
+        Ok(listener) => listener,
+        Err(e) => {
+            println!("Unable to bind socket port: {:?}", e);
+            return
+        }
+    };
 
     let (broadcast_tx, broadcast_rx): (Sender<BroadcastMessage>, Receiver<BroadcastMessage>) = mpsc::channel();
     let (registration_tx, registration_rx): (Sender<Client>, Receiver<Client>) = mpsc::channel();

@@ -58,6 +58,7 @@ pub fn start_channels_thread(
                 // User wants to leave the channel
                 let mut index_to_remove = 0;
                 for i in 0..channel.clients.len(){
+                    // Safe unwrap because clients cannot change during execution (In a mutex)
                     if *channel.clients.get(i).unwrap() == change_channel_message.client {
                         index_to_remove = i;
                         break;
@@ -123,8 +124,16 @@ fn init_default_channels(channels: Arc<Mutex<HashMap<String, Channel>>>) {
         clients: Vec::new()
     };
 
-    channels.lock().unwrap().insert(String::from("#rust"), rust_channel);
-    channels.lock().unwrap().insert(String::from("#java"), java_channel);
+    let mut channels = match channels.lock() {
+        Ok(channels) => channels,
+        Err(e) => {
+            println!("Unable to acquire channels lock: {:?}", e);
+            return
+        }
+    };
+
+    channels.insert(String::from("#rust"), rust_channel);
+    channels.insert(String::from("#java"), java_channel);
 }
 
 fn send_synchronous_message(client: Client, message: String) {
