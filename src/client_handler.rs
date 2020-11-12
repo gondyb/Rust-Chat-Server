@@ -1,82 +1,163 @@
-use std::sync::mpsc::{Sender};
-use std::net::{TcpStream, Shutdown};
-use std::io::{Write, BufReader, BufWriter, BufRead};
-use ansi_term::Colour;
-use ansi_term::Colour::RGB;
-use rand::Rng;
-use crate::messages::{UserMessage, SystemMessage};
-use crate::messages::Message;
-use chrono::{Utc};
+use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::net::TcpStream;
+use std::sync::mpsc::Sender;
 
+use uuid::Uuid;
 
-fn generate_random_color() -> Colour {
-    //Gives a random color for each user
-    let mut rng = rand::thread_rng();
-    let rng_r = rng.gen_range(0, 255);
-    let rng_g = rng.gen_range(0, 255);
-    let rng_b = rng.gen_range(0, 255);
+use crate::protocol::{part_msg, pong, priv_msg, welcome_reply};
+use crate::server::{BroadcastMessage, ChannelMessage};
 
-    RGB(rng_r, rng_g, rng_b)
+pub struct Client {
+    pub id: Uuid,
+    pub stream: TcpStream,
+    pub username: String,
+    pub channel: Option<String>
 }
 
-pub fn handle_client(stream: TcpStream, sender : Sender<String>) {
-    let mut writer = BufWriter::new(stream.try_clone().unwrap());
-    let mut reader = BufReader::new(stream.try_clone().unwrap());
-    writer.write(b"Welcome to the chat room!\n").unwrap();
-    writer.write(b"Please enter your name: \n").unwrap();
-    writer.flush().unwrap();
+impl Clone for Client {
+    fn clone(&self) -> Self {
+        Client {
+            id: self.id,
+            stream: self.stream.try_clone().expect("Unable to clone client's stream"),
+            username: self.username.clone(),
+            channel: self.channel.clone()
+        }
+    }
+}
 
-    let mut name = String::new();
-    reader.read_line(&mut name).unwrap();
-    name.trim_end();
-    name.truncate(name.len() - 2);
+impl PartialEq for Client {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
 
-    let dt = Utc::now();
-    let welcome_message = SystemMessage{
-        content: format_args!("Welcome {}!", name.clone()).to_string(),
-        date: dt
-    };
+pub fn handle_client(client: TcpStream, broadcast_tx: Sender<BroadcastMessage>, registration_tx: Sender<Client>, channel_tx: Sender<ChannelMessage>) {
+    let mut reader = BufReader::new(client.try_clone().unwrap());
 
-    sender.send(welcome_message.beautify());
+    let mut recvd_message = String::new();
 
-    let user_color = generate_random_color();
+    let mut current_client: Option<Client> = Option::None;
 
-    let mut string_message = String::new();
-    'read_loop: while match reader.read_line(&mut string_message) {
+    while match reader.read_line(&mut recvd_message) {
         Ok(_) => {
-            if string_message.is_empty() {
-                let dt = Utc::now();
-                let welcome_message = SystemMessage{
-                    content: format_args!("Goodbye {}!", name.clone()).to_string(),
-                    date: dt
-                };
+            handle_msg(
+                recvd_message.clone(),
+                client.try_clone().unwrap(),
+                broadcast_tx.clone(),
+                registration_tx.clone(),
+                channel_tx.clone(),
+                &mut current_client
+            );
 
-                sender.send(welcome_message.beautify());
-                stream.shutdown(Shutdown::Both).unwrap();
-                break 'read_loop;
-            }
-            let dt = Utc::now();
-            let msg = UserMessage{
-                content: string_message,
-                username: name.clone(),
-                date: dt
-            };
-
-            sender.send(user_color.paint(msg.beautify()).to_string()).unwrap();
-            string_message = String::new();
+            recvd_message = String::new();
             true
         },
-        Err(_) => {
-            let dt = Utc::now();
-            let welcome_message = SystemMessage{
-                content: format_args!("Goodbye {}!", name.clone()).to_string(),
-                date: dt
-            };
-
-            sender.send(welcome_message.beautify());
-            println!("An error occurred, terminating connection with {}", stream.peer_addr().unwrap());
-            stream.shutdown(Shutdown::Both).unwrap();
-            false
+        Err(e) => {
+            panic!("{:?}", e);
         }
     } {}
+}
+
+fn handle_msg(
+    msg: String,
+    stream: TcpStream,
+    broadcast_tx: Sender<BroadcastMessage>,
+    registration_tx: Sender<Client>,
+    channel_tx: Sender<ChannelMessage>,
+    current_client_mut: &mut Option<Client>
+    ) {
+    println!("{:?}", msg);
+
+    let args: Vec<&str> = msg.split_whitespace().collect();
+    let body: Vec<&str> = msg.split(":").collect();
+
+    match args[0] {
+       "NICK" => {
+            register_client(
+                stream,
+                String::from(args[1]),
+                registration_tx.clone(),
+                current_client_mut
+            );
+        }
+        "JOIN" => {
+            let msg = ChannelMessage {
+                client: current_client_mut.clone().unwrap(),
+                channel: String::from(args[1]),
+                leave: false
+            };
+
+            channel_tx.send(msg);
+        }
+        "PING" => {
+            let mut writer = BufWriter::new(stream.try_clone().unwrap());
+            writer.write(pong(String::from(args[1])).as_bytes());
+            writer.flush();
+        }
+        "PRIVMSG" => {
+            let sender = current_client_mut.clone().unwrap();
+            let content = priv_msg(
+                sender.username.clone(),
+                sender.stream.local_addr().unwrap().ip().to_string(),
+                String::from(args[1]),
+                String::from(body[1]).replace('\r', "").replace('\n', "")
+            );
+
+            let msg = BroadcastMessage {
+                content,
+                channel: String::from(args[1]),
+                sender,
+                send_to_sender: false
+            };
+
+            broadcast_tx.send(msg);
+        }
+        "PART" => {
+            let sender = current_client_mut.clone().unwrap();
+            let content = part_msg(
+                sender.username.clone(),
+                sender.stream.local_addr().unwrap().ip().to_string(),
+                String::from(args[1]),
+                String::from(body[1]).replace('\r', "").replace('\n', "")
+            );
+
+            let msg = BroadcastMessage {
+                content,
+                channel: String::from(args[1]),
+                sender,
+                send_to_sender: true
+            };
+
+            broadcast_tx.send(msg);
+
+            let msg = ChannelMessage {
+                client: current_client_mut.clone().unwrap(),
+                channel: String::from(args[1]),
+                leave: true
+            };
+
+            channel_tx.send(msg);
+        }
+        _ => {
+            println!("Command {} not found", args[0]);
+        }
+    }
+
+}
+
+fn register_client(stream: TcpStream, username: String, registration_tx: Sender<Client>, current_client: &mut Option<Client>) {
+    let client = Client{
+        id: Uuid::new_v4(),
+        stream: stream.try_clone().unwrap(),
+        username: username.clone(),
+        channel: None
+    };
+
+    let mut writer = BufWriter::new(stream.try_clone().unwrap());
+    writer.write(welcome_reply(username).as_bytes());
+    writer.flush();
+
+    *current_client = Option::Some(client.clone());
+
+    registration_tx.send(client);
 }
