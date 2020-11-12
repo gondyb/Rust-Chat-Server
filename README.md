@@ -41,3 +41,23 @@ Des différents composants s'occupent des différentes parties de l'applocation 
 * client_handler s'occupe de lire les messages envoyés par les clients et de les dispatcher.
 * Postman s'occupe d'envoyer des messages uniques de manière asynchrone aux clients (peut provoquer des race conditions dans certaines situations)
 * Protocol s'occupe de formatter les messages à envoyer
+
+## Critères d'évalutation
+
+### Problème de concurrence résolu à l'aide de Mutex ou de Canal
+
+La discussion entre les différents threads (channels, registration, broadcast, ...) se font à l'aide de canaux définis dans [main.rs](src/main.rs).
+
+Le Vecteur qui stocke les clients, ainsi que la HashMap qui stocke les chaînes sont utilisées ave des Arc et des Mutex pour y accéder depuis différents threads. Ils sont définis dans le [main.rs](src/main.rs).
+
+### Trait implémenté et utilisé
+
+Nous avons implémenté le trait `Clone` et `PartialEq` sur la struct `Client` définie dans [client_handler.rs](src/client_handler.rs).
+
+### Gestion d'erreur
+
+Pas d'`unwrap` ni d'`except` utilisés.
+
+### Itération sur le contenu d'une collection 
+
+Utilisés un peu partout, notamment dans [broadcast.rs](src/broadcast.rs).
